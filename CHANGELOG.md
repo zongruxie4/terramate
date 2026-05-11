@@ -20,6 +20,13 @@ Given a version number `MAJOR.MINOR.PATCH`, we increment the:
 - Backward compatibility in versions `0.0.z` is **not guaranteed** when `z` is increased.
 - Backward compatibility in versions `0.y.z` is **not guaranteed** when `y` is increased.
 
+## Unreleased
+
+### Added
+
+- Hide bundles in the `terrmate ui` promote list, if they reference other bundles that would not exist in the target environment.
+  - This prevents errors that would otherwise occur once the bundle has been promoted.
+
 ## 0.17.0
 
 ### Added

@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/zclconf/go-cty/cty"
 
 	"github.com/terramate-io/terramate/config"
 	"github.com/terramate-io/terramate/errors"
@@ -130,7 +131,7 @@ func (m Model) buildPromoteFilters() []envFilterState {
 			if b.Environment == nil || b.Environment.ID != targetEnv.PromoteFrom {
 				continue
 			}
-			if !envAliases[b.Alias] {
+			if !envAliases[b.Alias] && len(missingBundleRefs(b, envAliases)) == 0 {
 				targetEnvHas[targetEnv.ID] = true
 				break
 			}
@@ -190,6 +191,9 @@ func (m Model) buildAllPromoteBundles() ([]*config.Bundle, []*config.Environment
 			if existing[b.Alias] {
 				continue
 			}
+			if len(missingBundleRefs(b, existing)) > 0 {
+				continue
+			}
 			bundles = append(bundles, b)
 			targetEnvs = append(targetEnvs, targetEnv)
 		}
@@ -207,6 +211,54 @@ func (m Model) buildAllPromoteBundles() ([]*config.Bundle, []*config.Environment
 		}
 	}
 	return sorted, sortedEnvs
+}
+
+// missingBundleRefs walks the inputs of b and returns the aliases of any
+// referenced bundles (cty objects with alias, class, environment.available==true)
+// that are absent from targetAliases.
+func missingBundleRefs(b *config.Bundle, targetAliases map[string]bool) []string {
+	seen := make(map[string]bool)
+	var missing []string
+
+	var walk func(v cty.Value)
+	walk = func(v cty.Value) {
+		if !v.IsKnown() || v.IsNull() {
+			return
+		}
+		t := v.Type()
+		if t.IsObjectType() &&
+			t.HasAttribute("alias") &&
+			t.HasAttribute("class") &&
+			t.HasAttribute("environment") {
+			envVal := v.GetAttr("environment")
+			if envVal.IsKnown() && !envVal.IsNull() &&
+				envVal.Type().IsObjectType() &&
+				envVal.Type().HasAttribute("available") {
+				avail := envVal.GetAttr("available")
+				if avail.IsKnown() && !avail.IsNull() && avail.True() {
+					alias := v.GetAttr("alias").AsString()
+					if !targetAliases[alias] && !seen[alias] {
+						seen[alias] = true
+						missing = append(missing, alias)
+					}
+				}
+			}
+			return // do not descend into the referenced bundle's embedded inputs/exports
+		}
+
+		if t.IsObjectType() || t.IsMapType() ||
+			t.IsListType() || t.IsTupleType() || t.IsSetType() {
+			for it := v.ElementIterator(); it.Next(); {
+				_, elem := it.Element()
+				walk(elem)
+			}
+		}
+	}
+
+	for _, v := range b.Inputs {
+		walk(v)
+	}
+	return missing
 }
 
 func envNameForID(envs []*config.Environment, envID string) string {
